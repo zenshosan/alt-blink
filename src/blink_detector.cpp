@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (c) 2022 hageemh
+ * Copyright (c) 2024 Masaaki Hamada
  */
 
 #include "blink_detector.h"
