@@ -8,6 +8,7 @@
 #include <string_view>
 #include <format>
 #include <iostream>
+#include <mutex>
 
 #include <tchar.h>
 
@@ -18,6 +19,8 @@
 #define DEFAULT_TO_STRING(p, x) default: p = x;      break;
 
 extern std::atomic_bool g_debugPrint;
+extern std::mutex g_pauseLock;
+extern bool g_pause;
 
 #define isDebugPrintEnabled() g_debugPrint.load(std::memory_order_relaxed)
 
@@ -64,20 +67,23 @@ public:
 using tstring      = std::basic_string<TCHAR>;
 using tstring_view = std::basic_string_view<TCHAR>;
 
-template <class... _Types>
+template <class... Args>
+using tformat_string = std::basic_format_string<TCHAR, std::type_identity_t<Args>...>;
+
+template <class... Args>
 [[nodiscard]]
-tstring tfmt(const tstring_view _Fmt, const _Types&... _Args)
+tstring tfmt(tformat_string<Args...> _Fmt, Args&&... args)
 {
-    return std::format(_Fmt, _Args...);
+    return std::format(_Fmt, std::forward<Args>(args)...);
 }
 
-template <class... _Types>
-void tprint(const tstring_view _Fmt, const _Types&... _Args)
+template <class... Args>
+void tprint(tformat_string<Args...> fmt, Args&&... args)
 {
-    if (! g_debugPrint) {
+    if (!g_debugPrint) {
         return;
     }
-    auto s = std::format(_Fmt, _Args...);
+    auto s = std::format(fmt, std::forward<Args>(args)...);
     _putts(s.c_str());
 }
 

@@ -5,6 +5,8 @@
 #include "framework.h"
 
 std::atomic_bool g_debugPrint;
+std::mutex g_pauseLock;
+bool g_pause;
 
 void win32ErrorMessage(LPCTSTR functionName)
 {

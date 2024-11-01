@@ -12,7 +12,8 @@
 #define IDC_ALTBLINK                    109
 #define IDR_TRAY_EXIT                   110
 #define IDR_TRAY_LOG                    111
-#define IDR_TRAY_RESET                  112
+#define IDR_TRAY_PAUSE                  112
+#define IDR_TRAY_RESET                  113
 #define IDR_MAINFRAME                   128
 #define IDC_STATIC                      -1
 

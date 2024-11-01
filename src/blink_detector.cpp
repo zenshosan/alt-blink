@@ -4,10 +4,17 @@
 
 #include "blink_detector.h"
 #include "keyboard_hook.h"
+#include <queue>
+#include <deque>
+#include <unordered_map>
+#include <filesystem>
+#include <psapi.h>
 
 #define MODULE_NAME _T("blink_detector")
 
 extern std::atomic_bool g_debugPrint;
+extern std::mutex g_pauseLock;
+extern bool g_pause;
 
 using sc_type = USHORT;  // Scan code.
 using vk_type = UCHAR;   // Virtual key.
@@ -28,6 +35,74 @@ struct Context {
 
 static blinkDetector::FuncHandleBlinkEvent s_handler;
 
+static std::deque<HWND> s_wndQueue;
+static std::unordered_map<HWND, bool> s_wndMap;
+static const size_t kQueueMax = 32;
+
+static bool checkThroughpassProcess(HWND fgWnd)
+{
+    auto it = s_wndMap.find(fgWnd);
+    if (it != s_wndMap.end()) {
+        return it->second;
+    }
+
+    DWORD processId;
+    DWORD threadId = GetWindowThreadProcessId(fgWnd, &processId);
+    if (threadId == 0) {
+        // error
+    }
+
+    // プロセスIDからプロセスハンドルを取得
+    HANDLE processHandle = ::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
+    if (processHandle == nullptr) {
+        LOG_TRACE(_T("OpenProcess failed"));
+        return false;
+    }
+    defer {
+        // プロセスハンドルを閉じる
+        ::CloseHandle(processHandle);
+    };
+
+    // プロセスの実行ファイル名を取得
+    char processName[MAX_PATH] = {};
+    HMODULE hModule = NULL;
+    DWORD dwRet = ::GetModuleFileNameExA(processHandle, hModule, processName, DWORD(sizeof(processName)));
+    if (dwRet == 0) {
+        LOG_TRACE(_T("GetModuleFileNameExA failed"));
+        return false;
+    }
+
+    std::filesystem::path path{std::string_view{processName, dwRet}};
+#ifdef _UNICODE
+    auto name =  (path.parent_path().stem() / path.filename()).native();
+#else
+    auto name =  (path.parent_path().stem() / path.filename()).string();
+#endif
+
+    LOG_TRACE(_T("process_name: {}"), name);
+
+    // passthroughする対象のリスト
+    static const std::vector<tstring> blacklist {_T("System32\\mstsc.exe") };
+
+    auto it2 = std::find(blacklist.begin(), blacklist.end(), name);
+
+    // blacklistに含まれていたらtrue
+    auto result = (it2 != blacklist.end());
+    LOG_TRACE(_T("result: {}"), result);
+
+    // mapとqueueに追加
+    auto n = s_wndQueue.size();
+    if (n >= kQueueMax) {
+        auto h = s_wndQueue.front();
+        s_wndQueue.pop_front();
+        s_wndMap.erase(s_wndMap.find(h));
+    }
+    s_wndQueue.push_back(fgWnd);
+    s_wndMap[fgWnd] = result;
+
+    return result;
+}
+
 static LRESULT handleKeyEvent(const KBDLLHOOKSTRUCT& event, WPARAM wParam)
 {
     auto& ctx = s_context;
@@ -36,6 +111,7 @@ static LRESULT handleKeyEvent(const KBDLLHOOKSTRUCT& event, WPARAM wParam)
 
     HWND fgWnd   = ::GetForegroundWindow();
     bool keyDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+    bool throughpass = checkThroughpassProcess(fgWnd);
 
     uint32_t modifier = 0;
     switch (vk) {
@@ -64,7 +140,7 @@ static LRESULT handleKeyEvent(const KBDLLHOOKSTRUCT& event, WPARAM wParam)
 
     switch (ctx.state) {
     case kStateWatching: {
-        if (keyDown && (vk == VK_LMENU || vk == VK_RMENU)) {
+        if (!throughpass && keyDown && (vk == VK_LMENU || vk == VK_RMENU)) {
             // altが押された
             LOG_TRACE(_T("->kStateAltDown: consume key event"));
             ctx.state      = kStateAltDown;
