@@ -469,6 +469,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
         blinkEvent::HandleTimer(wParam);
         break;
+    case WM_ALTBLINK_SETIME:
+        blinkEvent::HandleSetIme(wParam);
+        break;
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);
     }

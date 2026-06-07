@@ -2,6 +2,7 @@
  * Copyright (c) 2024 Masaaki Hamada
  */
 
+#include "blink_event.h"
 #include "blink_detector.h"
 #include "process_excluder.h"
 #include "keyboard_hook.h"
@@ -126,7 +127,8 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                     g_lAltInjected = false;
                 } else if (!g_isCombinationPress) {
                     //WriteLog(L"単独タップと判断 -> IMEをオフにします。");
-                    SetImeStatus(false);
+                    // フックを長時間ブロックしないよう、IME操作はメインスレッドへ委譲する
+                    PostMessage(s_hMainWnd, WM_ALTBLINK_SETIME, 0, 0);
                 }
                 return 1;
             }
@@ -143,7 +145,8 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                     g_rAltInjected = false;
                 } else if (!g_isCombinationPress) {
                     //WriteLog(L"単独タップと判断 -> IMEをオンにします。");
-                    SetImeStatus(true);
+                    // フックを長時間ブロックしないよう、IME操作はメインスレッドへ委譲する
+                    PostMessage(s_hMainWnd, WM_ALTBLINK_SETIME, 1, 0);
                 }
                 return 1;
             }
@@ -286,6 +289,13 @@ int Stop(void) noexcept
 void HandleTimer(WPARAM wParam)
 {
     HandleTimer_(wParam);
+}
+
+// メインスレッド(メッセージループ)上で実行されるIME操作。
+// フック内では行わないことで、LL keyboard hookのタイムアウトによる無効化を防ぐ。
+void HandleSetIme(WPARAM wParam)
+{
+    SetImeStatus(wParam != 0);
 }
 
 END_NAMESPACE(blinkEvent);
