@@ -4,7 +4,9 @@
 
 #include "framework.h"
 #include "alt-blink.h"
-#include "blink_handler.h"
+//#include "blink_handler.h"
+#include "blink_event.h"
+#include "async_log.h"
 
 #include <shellapi.h>
 
@@ -165,7 +167,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
     Shell_NotifyIcon(NIM_ADD, &notifyicondata);
 
-    int ret = blinkHandler::Start(hInstance);
+    int ret = blinkEvent::Start(s_hWnd, hInstance);
     if (0 > ret) {
         return FALSE;
     }
@@ -228,10 +230,12 @@ static void showLogWindow(void)
     ::SetConsoleCtrlHandler(HandlerRoutine, /*Add*/TRUE);
 
     g_debugPrint = true;
+    asyncLog::Start();
 }
 
 static void hideLogWindow(void)
 {
+    asyncLog::Stop();
     g_debugPrint = false;
 
     ::SetConsoleCtrlHandler(HandlerRoutine, /*Add*/FALSE);
@@ -256,7 +260,7 @@ static void toggleLogWindow()
 static void pause(void)
 {
     int ret;
-    ret = blinkHandler::Stop();
+    ret = blinkEvent::Stop();
     if (0 > ret) {
         //return FALSE;
     }
@@ -265,7 +269,7 @@ static void pause(void)
 static void resume(void)
 {
     int ret;
-    ret = blinkHandler::Start(hInst);
+    ret = blinkEvent::Start(s_hWnd, hInst);
     if (0 > ret) {
         //return FALSE;
     }
@@ -461,6 +465,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_TASKTRAY:
         renderTasktrayMenu(wParam, lParam);
+        break;
+    case WM_TIMER:
+        blinkEvent::HandleTimer(wParam);
         break;
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);
