@@ -217,6 +217,13 @@ void ResetAltState()
     if (g_isLAltDown || g_isRAltDown) {
         KillTimer(s_hMainWnd, IDT_LALT_TIMER);
         KillTimer(s_hMainWnd, IDT_RALT_TIMER);
+        // 注入済みの実Altは、OS側の押しっぱなしを防ぐため必ずupを送る
+        if (g_lAltInjected) {
+            SendKey(VK_LMENU, false);
+        }
+        if (g_rAltInjected) {
+            SendKey(VK_RMENU, false);
+        }
         g_isLAltDown = false;
         g_isRAltDown = false;
         g_isCombinationPress = false;
