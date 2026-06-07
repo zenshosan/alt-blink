@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (c) 2022 hageemh
+ * Copyright (c) 2026 Masaaki Hamada
  */
 
 #include "framework.h"

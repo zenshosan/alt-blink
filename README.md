@@ -27,7 +27,7 @@ Windowsのstartupから自動起動するようにしておくとよいと思い
 私もこれまで alt-ime-ahk にはお世話になっていました。ありがとうございます。
 ただしaltキーのハンドリングのアルゴリズムは独自に書いたので振る舞いは若干異なると思います。
 
-IME切り替えについては alt-ime-ahk も依存している [eamat@Cabinet - IME制御](http://www6.atwiki.jp/eamat/pages/17.html)
+IME切り替えについては alt-ime-ahk も参考にしている [eamat@Cabinet - IME制御](http://www6.atwiki.jp/eamat/pages/17.html)
 を参考にさせていただきました。IMEの制御についてはどうも公式のドキュメントがないようでとても助かりました。
 
 ## ライセンス

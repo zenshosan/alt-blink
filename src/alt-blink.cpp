@@ -1,10 +1,12 @@
 ﻿/*
- * Copyright (c) 2022 hageemh
+ * Copyright (c) 2026 Masaaki Hamada
  */
 
 #include "framework.h"
 #include "alt-blink.h"
-#include "blink_handler.h"
+//#include "blink_handler.h"
+#include "blink_event.h"
+#include "async_log.h"
 
 #include <shellapi.h>
 
@@ -32,6 +34,9 @@ static void showLogWindow(void);
 static void hideLogWindow(void);
 static void toggleLogWindow(void);
 static void reset(void);
+static void togglePause(void);
+static void pause(void);
+static void resume(void);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -162,7 +167,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
     Shell_NotifyIcon(NIM_ADD, &notifyicondata);
 
-    int ret = blinkHandler::Start(hInstance);
+    int ret = blinkEvent::Start(s_hWnd, hInstance);
     if (0 > ret) {
         return FALSE;
     }
@@ -225,10 +230,12 @@ static void showLogWindow(void)
     ::SetConsoleCtrlHandler(HandlerRoutine, /*Add*/TRUE);
 
     g_debugPrint = true;
+    asyncLog::Start();
 }
 
 static void hideLogWindow(void)
 {
+    asyncLog::Stop();
     g_debugPrint = false;
 
     ::SetConsoleCtrlHandler(HandlerRoutine, /*Add*/FALSE);
@@ -250,16 +257,41 @@ static void toggleLogWindow()
     }
 }
 
-static void reset(void)
+static void pause(void)
 {
     int ret;
-    ret = blinkHandler::Stop();
+    ret = blinkEvent::Stop();
     if (0 > ret) {
         //return FALSE;
     }
-    ret = blinkHandler::Start(hInst);
+}
+
+static void resume(void)
+{
+    int ret;
+    ret = blinkEvent::Start(s_hWnd, hInst);
     if (0 > ret) {
         //return FALSE;
+    }
+}
+
+static void togglePause(void)
+{
+    std::lock_guard lock(g_pauseLock);
+    if (g_pause) {
+        resume();
+    } else {
+        pause();
+    }
+    g_pause = !g_pause;
+}
+
+static void reset(void)
+{
+    std::lock_guard lock(g_pauseLock);
+    if (!g_pause) {
+        pause();
+        resume();
     }
 }
 
@@ -317,7 +349,25 @@ static void renderTasktrayMenu(WPARAM wParam, LPARAM lParam)
             ::InsertMenuItem(hMenu, 1, TRUE, &menuiteminfo);
         }
         {
-           static const TCHAR terminateText[] = _T("Reset");
+            MENUITEMINFO menuiteminfo{
+                .cbSize = sizeof(menuiteminfo),
+                .fMask = MIIM_STRING | MIIM_ID,
+                .wID = IDR_TRAY_PAUSE,
+            };
+            if (g_pause) {
+                static const TCHAR menuText[] = _T("Resume");
+                menuiteminfo.dwTypeData = const_cast<LPTSTR>(menuText);
+                menuiteminfo.cch = _countof(menuText);
+            }
+            else {
+                static const TCHAR menuText[] = _T("Pause");
+                menuiteminfo.dwTypeData = const_cast<LPTSTR>(menuText);
+                menuiteminfo.cch = _countof(menuText);
+            }
+            ::InsertMenuItem(hMenu, 2, TRUE, &menuiteminfo);
+        }
+        {
+            static const TCHAR terminateText[] = _T("Reset");
             MENUITEMINFO menuiteminfo{
                 .cbSize     = sizeof(menuiteminfo),
                 .fMask      = MIIM_STRING | MIIM_ID,
@@ -325,7 +375,7 @@ static void renderTasktrayMenu(WPARAM wParam, LPARAM lParam)
                 .dwTypeData = const_cast<LPTSTR>(terminateText),
                 .cch        = _countof(terminateText),
             };
-            ::InsertMenuItem(hMenu, 2, TRUE, &menuiteminfo);
+            ::InsertMenuItem(hMenu, 3, TRUE, &menuiteminfo);
         }
         {
             MENUITEMINFO menuiteminfo{
@@ -333,7 +383,7 @@ static void renderTasktrayMenu(WPARAM wParam, LPARAM lParam)
                 .fMask  = MIIM_FTYPE,
                 .fType  = MFT_SEPARATOR,
             };
-            ::InsertMenuItem(hMenu, 3, TRUE, &menuiteminfo);
+            ::InsertMenuItem(hMenu, 4, TRUE, &menuiteminfo);
         }
         {
             static const TCHAR terminateText[] = _T("Exit");
@@ -344,7 +394,7 @@ static void renderTasktrayMenu(WPARAM wParam, LPARAM lParam)
                 .dwTypeData = const_cast<LPTSTR>(terminateText),
                 .cch        = _countof(terminateText),
             };
-            ::InsertMenuItem(hMenu, 4, TRUE, &menuiteminfo);
+            ::InsertMenuItem(hMenu, 5, TRUE, &menuiteminfo);
         }
         // menuの外をクリックしたらmenuを消すようにするためにはFGにする必要があるらしい
         ::SetForegroundWindow(s_hWnd);
@@ -377,6 +427,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 break;
             case IDM_EXIT:
                 DestroyWindow(hWnd);
+                break;
+            case IDR_TRAY_PAUSE:
+                togglePause();
                 break;
             case IDR_TRAY_RESET:
                 reset();
@@ -412,6 +465,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     case WM_TASKTRAY:
         renderTasktrayMenu(wParam, lParam);
+        break;
+    case WM_TIMER:
+        blinkEvent::HandleTimer(wParam);
+        break;
+    case WM_ALTBLINK_SETIME:
+        blinkEvent::HandleSetIme(wParam);
         break;
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);
