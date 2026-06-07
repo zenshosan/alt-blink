@@ -196,7 +196,11 @@ void SetImeStatus(bool enable)
         //WriteLog(L"IME操作エラー: IMEウィンドウハンドルが取得できません。");
         return;
     }
-    SendMessage(hImeWnd, WM_IME_CONTROL, IMC_SETOPENSTATUS, enable ? 1 : 0);
+    // 無応答アプリで長時間ブロックしないよう、タイムアウト付きで送信する。
+    // タイムアウトはLowLevelHooksTimeout(既定300ms)より十分短くしておく。
+    DWORD_PTR dwResult = 0;
+    SendMessageTimeout(hImeWnd, WM_IME_CONTROL, IMC_SETOPENSTATUS, enable ? 1 : 0,
+                       SMTO_ABORTIFHUNG | SMTO_NORMAL, /*uTimeout(ms)*/150, &dwResult);
     //WriteLog(std::wstring(L"IME状態を ") + (enable ? L"オン" : L"オフ") + L" に設定しました。");
 }
 
