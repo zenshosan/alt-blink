@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (c) 2025 Masaaki Hamada
+ * Copyright (c) 2026 Masaaki Hamada
  */
 
 #pragma once
