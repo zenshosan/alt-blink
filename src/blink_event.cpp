@@ -34,6 +34,9 @@ bool g_isRAltDown = false;
 bool g_isCombinationPress = false;
 bool g_lAltLongPress = false;
 bool g_rAltLongPress = false;
+// 実Altのdownを注入済みか（押下しっぱなし防止のため、解放時に必ずupを送る必要がある）
+bool g_lAltInjected = false;
+bool g_rAltInjected = false;
 const UINT LONG_PRESS_THRESHOLD_MS = 200;
 const UINT_PTR IDT_LALT_TIMER = 1;
 const UINT_PTR IDT_RALT_TIMER = 2;
@@ -73,6 +76,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                 g_isLAltDown = true;
                 g_isCombinationPress = false;
                 g_lAltLongPress = false;
+                g_lAltInjected = false;
                 SetTimer(s_hMainWnd, IDT_LALT_TIMER, LONG_PRESS_THRESHOLD_MS, NULL);
                 return 1;
             }
@@ -83,6 +87,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                 g_isRAltDown = true;
                 g_isCombinationPress = false;
                 g_rAltLongPress = false;
+                g_rAltInjected = false;
                 SetTimer(s_hMainWnd, IDT_RALT_TIMER, LONG_PRESS_THRESHOLD_MS, NULL);
                 return 1;
             }
@@ -92,11 +97,17 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                 g_isCombinationPress = true;
                 if (g_isLAltDown) {
                     KillTimer(s_hMainWnd, IDT_LALT_TIMER);
-                    if (!g_lAltLongPress) SendKey(VK_LMENU, true);
+                    if (!g_lAltInjected) {
+                        SendKey(VK_LMENU, true);
+                        g_lAltInjected = true;
+                    }
                 }
                 if (g_isRAltDown) {
                     KillTimer(s_hMainWnd, IDT_RALT_TIMER);
-                    if (!g_rAltLongPress) SendKey(VK_RMENU, true);
+                    if (!g_rAltInjected) {
+                        SendKey(VK_RMENU, true);
+                        g_rAltInjected = true;
+                    }
                 }
             }
         }
@@ -109,9 +120,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                 g_isLAltDown = false;
                 KillTimer(s_hMainWnd, IDT_LALT_TIMER);
 
-                if (g_lAltLongPress) {
-                    //WriteLog(L"長押し後だったため、キー解放イベントを送信。");
+                if (g_lAltInjected) {
+                    //WriteLog(L"実Altを注入済みのため、キー解放イベントを送信。");
                     SendKey(VK_LMENU, false);
+                    g_lAltInjected = false;
                 } else if (!g_isCombinationPress) {
                     //WriteLog(L"単独タップと判断 -> IMEをオフにします。");
                     SetImeStatus(false);
@@ -125,9 +137,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                 g_isRAltDown = false;
                 KillTimer(s_hMainWnd, IDT_RALT_TIMER);
 
-                if (g_rAltLongPress) {
-                    //WriteLog(L"長押し後だったため、キー解放イベントを送信。");
+                if (g_rAltInjected) {
+                    //WriteLog(L"実Altを注入済みのため、キー解放イベントを送信。");
                     SendKey(VK_RMENU, false);
+                    g_rAltInjected = false;
                 } else if (!g_isCombinationPress) {
                     //WriteLog(L"単独タップと判断 -> IMEをオンにします。");
                     SetImeStatus(true);
@@ -149,6 +162,7 @@ void HandleTimer_(UINT_PTR idEvent)
         if (g_isLAltDown && !g_isCombinationPress) {
             //WriteLog(L"左Alt長押しを検出。キー押下イベントを送信します。");
             g_lAltLongPress = true;
+            g_lAltInjected = true;
             SendKey(VK_LMENU, true);
         }
     } else if (idEvent == IDT_RALT_TIMER) {
@@ -156,6 +170,7 @@ void HandleTimer_(UINT_PTR idEvent)
         if (g_isRAltDown && !g_isCombinationPress) {
             //WriteLog(L"右Alt長押しを検出。キー押下イベントを送信します。");
             g_rAltLongPress = true;
+            g_rAltInjected = true;
             SendKey(VK_RMENU, true);
         }
     }
@@ -207,6 +222,8 @@ void ResetAltState()
         g_isCombinationPress = false;
         g_lAltLongPress = false;
         g_rAltLongPress = false;
+        g_lAltInjected = false;
+        g_rAltInjected = false;
     }
 }
 
