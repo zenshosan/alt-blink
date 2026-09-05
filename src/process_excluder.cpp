@@ -3,10 +3,13 @@
  */
 
 // 除外リスト機能:
-// 実行ファイルと同じディレクトリに "exclude.txt" を作成し、1行に1つパスを記述すると、
+// 実行ファイルと同じディレクトリに "alt-blink_excludes.txt" を作成し、1行に1つパスを記述すると、
 // そのパスがフルパスの末尾と一致するプロセス上ではこのツールの機能が無効になります。
 // (例: "explorer.exe", "system32\notepad.exe", "c:\program files\app\app.exe")
-// ※ exclude.txt は UTF-8 で保存してください。行頭の'#'はコメントとして扱われます。
+// ※ ファイルは UTF-8 で保存してください。行頭の'#'はコメントとして扱われます。
+//
+// Remote Desktop Connection (mstsc.exe) はファイルの有無に関わらず常にパススルーする。
+// 旧 blink_detector の blacklist と同じ方針。
 
 #include "process_excluder.h"
 
@@ -29,6 +32,22 @@ static std::unordered_map<HWND, bool> g_processCache;
 static std::deque<HWND> g_cacheLruList;
 static std::mutex g_cacheMutex;
 
+
+static bool PathEndsWithImage(const std::wstring& fullPathLower, const wchar_t* imageLower)
+{
+    const size_t flen = fullPathLower.length();
+    const size_t elen = wcslen(imageLower);
+    return flen >= elen &&
+           fullPathLower.compare(flen - elen, elen, imageLower) == 0 &&
+           (flen == elen || fullPathLower[flen - elen - 1] == L'\\');
+}
+
+// 設定ファイルに依存しない組み込み除外。
+// mstsc は独自の WH_KEYBOARD_LL でキーを再注入し、dwExtraInfo を落とす。
+static bool IsBuiltInExcludedImage(const std::wstring& fullPathLower)
+{
+    return PathEndsWithImage(fullPathLower, L"mstsc.exe");
+}
 
 BEGIN_NAMESPACE(processExcluder);
 
@@ -133,16 +152,16 @@ bool IsExcludedProcess(HWND hwnd)
     std::replace(fullPath.begin(), fullPath.end(), L'/', L'\\');
     std::transform(fullPath.begin(), fullPath.end(), fullPath.begin(), ::towlower);
 
-    for (const auto& excludedPath : g_excludedProcesses) {
-        auto flen = fullPath.length();
-        auto elen = excludedPath.length();
-        // フルパスの末尾に一致していたら該当すると判断
-        // だたし一致した一つ前がセパレータでなければならない
-        if (flen >= elen &&
-            fullPath.compare(flen - elen, elen, excludedPath) == 0 &&
-            (flen == elen || fullPath[flen - elen - 1] == L'\\')) {
-            isExcluded = true;
-            break;
+    if (IsBuiltInExcludedImage(fullPath)) {
+        isExcluded = true;
+    } else {
+        for (const auto& excludedPath : g_excludedProcesses) {
+            // フルパスの末尾に一致していたら該当すると判断
+            // ただし一致した一つ前がセパレータでなければならない
+            if (PathEndsWithImage(fullPath, excludedPath.c_str())) {
+                isExcluded = true;
+                break;
+            }
         }
     }
 

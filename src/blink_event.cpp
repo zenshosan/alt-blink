@@ -48,6 +48,31 @@ namespace pd = processExcluder;
 static void SendKey(WORD vKey, bool press);
 static void SetImeStatus(bool enable);
 
+// SendInput / CallNextHookEx は mutex の外側で行う。
+// どちらも同じスレッドで LowLevelKeyboardProc を再入させ得る。
+struct PendingAltInject {
+    bool lMenuDown = false;
+    bool rMenuDown = false;
+    bool lMenuUp = false;
+    bool rMenuUp = false;
+};
+
+static void FlushPendingAltInject(const PendingAltInject& pending)
+{
+    if (pending.lMenuDown) {
+        SendKey(VK_LMENU, true);
+    }
+    if (pending.rMenuDown) {
+        SendKey(VK_RMENU, true);
+    }
+    if (pending.lMenuUp) {
+        SendKey(VK_LMENU, false);
+    }
+    if (pending.rMenuUp) {
+        SendKey(VK_RMENU, false);
+    }
+}
+
 
 // --- キーボードフックプロシージャ ---
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
@@ -66,90 +91,107 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
             return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
         }
 
-        std::lock_guard<std::mutex> lock(g_altStateMutex);
-
-        if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)
+        bool consume = false;
+        PendingAltInject pending;
         {
-            if (pkbhs->vkCode == VK_LMENU)
+            std::lock_guard<std::mutex> lock(g_altStateMutex);
+
+            if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)
             {
-                if (g_isLAltDown) return 1;
-                //WriteLog(L"左Altキー押下を検出。");
-                g_isLAltDown = true;
-                g_isCombinationPress = false;
-                g_lAltLongPress = false;
-                g_lAltInjected = false;
-                SetTimer(s_hMainWnd, IDT_LALT_TIMER, LONG_PRESS_THRESHOLD_MS, NULL);
-                return 1;
-            }
-            else if (pkbhs->vkCode == VK_RMENU)
-            {
-                if (g_isRAltDown) return 1;
-                //WriteLog(L"右Altキー押下を検出。");
-                g_isRAltDown = true;
-                g_isCombinationPress = false;
-                g_rAltLongPress = false;
-                g_rAltInjected = false;
-                SetTimer(s_hMainWnd, IDT_RALT_TIMER, LONG_PRESS_THRESHOLD_MS, NULL);
-                return 1;
-            }
-            else if (g_isLAltDown || g_isRAltDown)
-            {
-                //WriteLog(L"組み合わせ押しを検出。 (他キー VK_CODE: " + std::to_wstring(pkbhs->vkCode) + L")");
-                g_isCombinationPress = true;
-                if (g_isLAltDown) {
-                    KillTimer(s_hMainWnd, IDT_LALT_TIMER);
-                    if (!g_lAltInjected) {
-                        SendKey(VK_LMENU, true);
-                        g_lAltInjected = true;
+                if (pkbhs->vkCode == VK_LMENU)
+                {
+                    if (g_isLAltDown) {
+                        consume = true;
+                    } else {
+                        //WriteLog(L"左Altキー押下を検出。");
+                        g_isLAltDown = true;
+                        g_isCombinationPress = false;
+                        g_lAltLongPress = false;
+                        g_lAltInjected = false;
+                        SetTimer(s_hMainWnd, IDT_LALT_TIMER, LONG_PRESS_THRESHOLD_MS, NULL);
+                        consume = true;
                     }
                 }
-                if (g_isRAltDown) {
-                    KillTimer(s_hMainWnd, IDT_RALT_TIMER);
-                    if (!g_rAltInjected) {
-                        SendKey(VK_RMENU, true);
-                        g_rAltInjected = true;
+                else if (pkbhs->vkCode == VK_RMENU)
+                {
+                    if (g_isRAltDown) {
+                        consume = true;
+                    } else {
+                        //WriteLog(L"右Altキー押下を検出。");
+                        g_isRAltDown = true;
+                        g_isCombinationPress = false;
+                        g_rAltLongPress = false;
+                        g_rAltInjected = false;
+                        SetTimer(s_hMainWnd, IDT_RALT_TIMER, LONG_PRESS_THRESHOLD_MS, NULL);
+                        consume = true;
+                    }
+                }
+                else if (g_isLAltDown || g_isRAltDown)
+                {
+                    //WriteLog(L"組み合わせ押しを検出。 (他キー VK_CODE: " + std::to_wstring(pkbhs->vkCode) + L")");
+                    g_isCombinationPress = true;
+                    if (g_isLAltDown) {
+                        KillTimer(s_hMainWnd, IDT_LALT_TIMER);
+                        if (!g_lAltInjected) {
+                            pending.lMenuDown = true;
+                            g_lAltInjected = true;
+                        }
+                    }
+                    if (g_isRAltDown) {
+                        KillTimer(s_hMainWnd, IDT_RALT_TIMER);
+                        if (!g_rAltInjected) {
+                            pending.rMenuDown = true;
+                            g_rAltInjected = true;
+                        }
+                    }
+                }
+            }
+            else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP)
+            {
+                if (pkbhs->vkCode == VK_LMENU)
+                {
+                    if (g_isLAltDown) {
+                        //WriteLog(L"左Altキー解放を検出。");
+                        g_isLAltDown = false;
+                        KillTimer(s_hMainWnd, IDT_LALT_TIMER);
+
+                        if (g_lAltInjected) {
+                            //WriteLog(L"実Altを注入済みのため、キー解放イベントを送信。");
+                            pending.lMenuUp = true;
+                            g_lAltInjected = false;
+                        } else if (!g_isCombinationPress) {
+                            //WriteLog(L"単独タップと判断 -> IMEをオフにします。");
+                            // フックを長時間ブロックしないよう、IME操作はメインスレッドへ委譲する
+                            PostMessage(s_hMainWnd, WM_ALTBLINK_SETIME, 0, 0);
+                        }
+                        consume = true;
+                    }
+                }
+                else if (pkbhs->vkCode == VK_RMENU)
+                {
+                    if (g_isRAltDown) {
+                        //WriteLog(L"右Altキー解放を検出。");
+                        g_isRAltDown = false;
+                        KillTimer(s_hMainWnd, IDT_RALT_TIMER);
+
+                        if (g_rAltInjected) {
+                            //WriteLog(L"実Altを注入済みのため、キー解放イベントを送信。");
+                            pending.rMenuUp = true;
+                            g_rAltInjected = false;
+                        } else if (!g_isCombinationPress) {
+                            //WriteLog(L"単独タップと判断 -> IMEをオンにします。");
+                            // フックを長時間ブロックしないよう、IME操作はメインスレッドへ委譲する
+                            PostMessage(s_hMainWnd, WM_ALTBLINK_SETIME, 1, 0);
+                        }
+                        consume = true;
                     }
                 }
             }
         }
-        else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP)
-        {
-            if (pkbhs->vkCode == VK_LMENU)
-            {
-                if (!g_isLAltDown) return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
-                //WriteLog(L"左Altキー解放を検出。");
-                g_isLAltDown = false;
-                KillTimer(s_hMainWnd, IDT_LALT_TIMER);
 
-                if (g_lAltInjected) {
-                    //WriteLog(L"実Altを注入済みのため、キー解放イベントを送信。");
-                    SendKey(VK_LMENU, false);
-                    g_lAltInjected = false;
-                } else if (!g_isCombinationPress) {
-                    //WriteLog(L"単独タップと判断 -> IMEをオフにします。");
-                    // フックを長時間ブロックしないよう、IME操作はメインスレッドへ委譲する
-                    PostMessage(s_hMainWnd, WM_ALTBLINK_SETIME, 0, 0);
-                }
-                return 1;
-            }
-            else if (pkbhs->vkCode == VK_RMENU)
-            {
-                if (!g_isRAltDown) return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
-                //WriteLog(L"右Altキー解放を検出。");
-                g_isRAltDown = false;
-                KillTimer(s_hMainWnd, IDT_RALT_TIMER);
-
-                if (g_rAltInjected) {
-                    //WriteLog(L"実Altを注入済みのため、キー解放イベントを送信。");
-                    SendKey(VK_RMENU, false);
-                    g_rAltInjected = false;
-                } else if (!g_isCombinationPress) {
-                    //WriteLog(L"単独タップと判断 -> IMEをオンにします。");
-                    // フックを長時間ブロックしないよう、IME操作はメインスレッドへ委譲する
-                    PostMessage(s_hMainWnd, WM_ALTBLINK_SETIME, 1, 0);
-                }
-                return 1;
-            }
+        FlushPendingAltInject(pending);
+        if (consume) {
+            return 1;
         }
     }
     return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
@@ -158,25 +200,29 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 // --- タイマープロシージャ (長押し判定用) ---
 void HandleTimer_(UINT_PTR idEvent)
 {
-    std::lock_guard<std::mutex> lock(g_altStateMutex);
+    PendingAltInject pending;
+    {
+        std::lock_guard<std::mutex> lock(g_altStateMutex);
 
-    if (idEvent == IDT_LALT_TIMER) {
-        KillTimer(s_hMainWnd, idEvent);
-        if (g_isLAltDown && !g_isCombinationPress) {
-            //WriteLog(L"左Alt長押しを検出。キー押下イベントを送信します。");
-            g_lAltLongPress = true;
-            g_lAltInjected = true;
-            SendKey(VK_LMENU, true);
-        }
-    } else if (idEvent == IDT_RALT_TIMER) {
-        KillTimer(s_hMainWnd, idEvent);
-        if (g_isRAltDown && !g_isCombinationPress) {
-            //WriteLog(L"右Alt長押しを検出。キー押下イベントを送信します。");
-            g_rAltLongPress = true;
-            g_rAltInjected = true;
-            SendKey(VK_RMENU, true);
+        if (idEvent == IDT_LALT_TIMER) {
+            KillTimer(s_hMainWnd, idEvent);
+            if (g_isLAltDown && !g_isCombinationPress) {
+                //WriteLog(L"左Alt長押しを検出。キー押下イベントを送信します。");
+                g_lAltLongPress = true;
+                g_lAltInjected = true;
+                pending.lMenuDown = true;
+            }
+        } else if (idEvent == IDT_RALT_TIMER) {
+            KillTimer(s_hMainWnd, idEvent);
+            if (g_isRAltDown && !g_isCombinationPress) {
+                //WriteLog(L"右Alt長押しを検出。キー押下イベントを送信します。");
+                g_rAltLongPress = true;
+                g_rAltInjected = true;
+                pending.rMenuDown = true;
+            }
         }
     }
+    FlushPendingAltInject(pending);
 }
 
 // --- IMEの状態を設定する関数 (GetGUIThreadInfoを使用) ---
@@ -220,25 +266,25 @@ void SendKey(WORD vKey, bool press)
 // --- Altキーの状態をリセットする関数 ---
 void ResetAltState()
 {
-    std::lock_guard<std::mutex> lock(g_altStateMutex);
-    if (g_isLAltDown || g_isRAltDown) {
-        KillTimer(s_hMainWnd, IDT_LALT_TIMER);
-        KillTimer(s_hMainWnd, IDT_RALT_TIMER);
-        // 注入済みの実Altは、OS側の押しっぱなしを防ぐため必ずupを送る
-        if (g_lAltInjected) {
-            SendKey(VK_LMENU, false);
+    PendingAltInject pending;
+    {
+        std::lock_guard<std::mutex> lock(g_altStateMutex);
+        if (g_isLAltDown || g_isRAltDown) {
+            KillTimer(s_hMainWnd, IDT_LALT_TIMER);
+            KillTimer(s_hMainWnd, IDT_RALT_TIMER);
+            // 注入済みの実Altは、OS側の押しっぱなしを防ぐため必ずupを送る
+            pending.lMenuUp = g_lAltInjected;
+            pending.rMenuUp = g_rAltInjected;
+            g_isLAltDown = false;
+            g_isRAltDown = false;
+            g_isCombinationPress = false;
+            g_lAltLongPress = false;
+            g_rAltLongPress = false;
+            g_lAltInjected = false;
+            g_rAltInjected = false;
         }
-        if (g_rAltInjected) {
-            SendKey(VK_RMENU, false);
-        }
-        g_isLAltDown = false;
-        g_isRAltDown = false;
-        g_isCombinationPress = false;
-        g_lAltLongPress = false;
-        g_rAltLongPress = false;
-        g_lAltInjected = false;
-        g_rAltInjected = false;
     }
+    FlushPendingAltInject(pending);
 }
 
 static void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook,
